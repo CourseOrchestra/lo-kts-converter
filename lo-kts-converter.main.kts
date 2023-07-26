@@ -17,6 +17,7 @@ import com.sun.star.connection.XConnector
 import com.sun.star.frame.XComponentLoader
 import com.sun.star.frame.XDesktop
 import com.sun.star.frame.XStorable
+import com.sun.star.lang.XComponent
 import com.sun.star.lang.XMultiComponentFactory
 import com.sun.star.text.XDocumentIndex
 import com.sun.star.text.XDocumentIndexesSupplier
@@ -44,19 +45,19 @@ ArgParser(args).parseInto(::MyArgs).run {
 }
 
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
-val outputDocBasePath = if (matchedDocBasePath != null) matchedDocBasePath.value else inputDoc
+val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 
 val xContext = socketContext()
 println("Connected to a running office")
-val xMCF = xContext?.getServiceManager()
+val xMCF = xContext?.serviceManager
 val available = if (xMCF != null) "available" else "not available"
-println("remote ServiceManager is " + available)
-val desktop = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
-val xDeskop = UnoRuntime.queryInterface(XDesktop::class.java, desktop) as XDesktop
-val xComponentLoader = UnoRuntime.queryInterface(XComponentLoader::class.java, desktop) as XComponentLoader
+println("Remote ServiceManager is $available")
+val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
+val xDeskop = qi(XDesktop::class.java, desktop)
+val xComponentLoader = qi(XComponentLoader::class.java, desktop)
 val loadProps = arrayOf<PropertyValue>()
-val component = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps);
-val xTextDocument = UnoRuntime.queryInterface(XTextDocument::class.java, component) as XTextDocument
+val component: XComponent = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
+val xTextDocument = qi(XTextDocument::class.java, component)
 
 // Update indexes
 val indexes = qi(XDocumentIndexesSupplier::class.java, xTextDocument)
@@ -66,7 +67,7 @@ for (i in 0..indexes.documentIndexes.count - 1) {
 }
 
 val xStorable = qi(XStorable::class.java, component)
-val saveProps = Array<PropertyValue>(2) { PropertyValue() }
+val saveProps = Array(2) { PropertyValue() }
 saveProps[0].Name = "Overwrite"
 saveProps[0].Value = true
 outputFormats.split(",").forEach {
@@ -94,7 +95,7 @@ fun socketContext(): XComponentContext? // use socket connection to Office
         // Get the local service manager
         val localFactory = localContext.serviceManager
         // connect to Office via its socket
-        val connector: XConnector = qi<XConnector>(XConnector::class.java,
+        val connector: XConnector = qi(XConnector::class.java,
                 localFactory.createInstanceWithContext(
                         "com.sun.star.connection.Connector", localContext))
         lateinit var connection: XConnection
@@ -108,11 +109,11 @@ fun socketContext(): XComponentContext? // use socket connection to Office
             } catch (_: Exception) {
             }
             delay(500)
-            attempts = attempts - 1
+            attempts -= 1
         }
 
         // create a bridge to Office via the socket
-        val bridgeFactory: XBridgeFactory = qi<XBridgeFactory>(XBridgeFactory::class.java,
+        val bridgeFactory: XBridgeFactory = qi(XBridgeFactory::class.java,
                 localFactory.createInstanceWithContext(
                         "com.sun.star.bridge.BridgeFactory", localContext))
 
@@ -120,15 +121,15 @@ fun socketContext(): XComponentContext? // use socket connection to Office
         val bridge = bridgeFactory.createBridge("socketBridgeAD", "urp", connection, null)
 
         // get the remote service manager
-        val serviceManager: XMultiComponentFactory = qi<XMultiComponentFactory>(XMultiComponentFactory::class.java,
+        val serviceManager: XMultiComponentFactory = qi(XMultiComponentFactory::class.java,
                 bridge.getInstance("StarOffice.ServiceManager"))
 
         // retrieve Office's remote component context as a property
-        val props: XPropertySet = qi<XPropertySet>(XPropertySet::class.java, serviceManager)
+        val props: XPropertySet = qi(XPropertySet::class.java, serviceManager)
         val defaultContext = props.getPropertyValue("DefaultContext")
 
         // get the remote interface XComponentContext
-        xcc = qi<XComponentContext>(XComponentContext::class.java, defaultContext)
+        xcc = qi(XComponentContext::class.java, defaultContext)
     } catch (e: Exception) {
         println("Unable to socket connect to Office")
     }
@@ -151,7 +152,7 @@ fun <T> qi(aType: Class<T>?, o: Any?): T // the "Loki" function -- reduces typin
 fun fnmToURL(fnm: String): String? // convert a file path to URL format
 {
     return try {
-        var sb: StringBuffer? = null
+        val sb: StringBuffer?
         val path = File(fnm).canonicalPath
         sb = StringBuffer("file:///")
         sb.append(path.replace('\\', '/'))
