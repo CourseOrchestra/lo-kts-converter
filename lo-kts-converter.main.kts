@@ -26,32 +26,36 @@ import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
 import com.xenomachina.argparser.ArgParser
 import com.xenomachina.argparser.default
+import com.xenomachina.argparser.mainBody
 import java.io.File
 import java.io.IOException
+import kotlin.system.exitProcess
 
 class MyArgs(parser: ArgParser) {
     val pInputDoc by parser.storing(
             "-i", "--input-doc", help = "Input document")
     val pOutputFormats by parser.storing(
-            "-f", "--output-formats", help = "Comma separated format list like docx,pdf,odt").default("pdf")
+            "-f", "--output-formats", help = "Comma separated result format list like docx,pdf,odt. Default result format is PDF").default("pdf")
+    val pLoCliCommand by parser.storing(
+            "-c", "--lo-cli-command", help = "CLI command to run Libre Office. Default command is 'soffice'.").default("soffice")
 }
+lateinit var inputDoc: String
+lateinit var outputFormats: String
+lateinit var loCliCommand: String
 
-var inputDoc: String
-var outputFormats: String
-
-ArgParser(args).parseInto(::MyArgs).run {
-    inputDoc = pInputDoc
-    outputFormats = pOutputFormats
+mainBody {
+    ArgParser(args).parseInto(::MyArgs).run {
+        inputDoc = pInputDoc
+        outputFormats = pOutputFormats
+        loCliCommand = pLoCliCommand
+    }
 }
 
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
-
 val xContext = socketContext()
-println("Connected to a running office")
-val xMCF = xContext?.serviceManager
+val xMCF: XMultiComponentFactory? = xContext.serviceManager
 val available = if (xMCF != null) "available" else "not available"
-println("Remote ServiceManager is $available")
 val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
 val xDeskop = qi(XDesktop::class.java, desktop)
 val xComponentLoader = qi(XComponentLoader::class.java, desktop)
@@ -65,6 +69,7 @@ for (i in 0..indexes.documentIndexes.count - 1) {
     val index = qi(XDocumentIndex::class.java, indexes.documentIndexes.getByIndex(i))
     index.update()
 }
+println("INFO: Indexes updated")
 
 val xStorable = qi(XStorable::class.java, component)
 val saveProps = Array(2) { PropertyValue() }
@@ -74,23 +79,24 @@ outputFormats.split(",").forEach {
     saveProps[1].Name = "FilterName"
     saveProps[1].Value = ext2format(it)
     xStorable.storeToURL(fnmToURL("$outputDocBasePath.$it"), saveProps)
+    println("INFO: $outputDocBasePath.$it stored")
 }
 
 xDeskop.terminate()
 
-fun socketContext(): XComponentContext? // use socket connection to Office
+fun socketContext(): XComponentContext // use socket connection to Office
 // https://forum.openoffice.org/en/forum/viewtopic.php?f=44&t=1014
 {
-    var xcc: XComponentContext? = null // the remote office component context
+    val xcc: XComponentContext?  // the remote office component context
     try {
         val cmdArray = arrayOfNulls<String>(3)
-        cmdArray[0] = "soffice"
+        cmdArray[0] = loCliCommand
         // requires soffice to be in Windows/Linux PATH env var.
         cmdArray[1] = "--headless"
         cmdArray[2] = "--accept=socket,host=localhost,port=" +
                 "8100" + ";urp;"
         val p = Runtime.getRuntime().exec(cmdArray)
-        if (p != null) println("Office process created")
+        if (p != null) println("INFO: Office process created")
         val localContext = Bootstrap.createInitialComponentContext(null)
         // Get the local service manager
         val localFactory = localContext.serviceManager
@@ -131,7 +137,8 @@ fun socketContext(): XComponentContext? // use socket connection to Office
         // get the remote interface XComponentContext
         xcc = qi(XComponentContext::class.java, defaultContext)
     } catch (e: Exception) {
-        println("Unable to socket connect to Office")
+        println("ERROR: Unable to socket connect to Office")
+        exitProcess(-1)
     }
     return xcc
 } // end of socketContext()
