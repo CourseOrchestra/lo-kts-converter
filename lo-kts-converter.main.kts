@@ -55,12 +55,19 @@ val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 val xContext = socketContext()
 val xMCF: XMultiComponentFactory? = xContext.serviceManager
-val available = if (xMCF != null) "available" else "not available"
+//val available = if (xMCF != null) "available" else "not available"
 val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
 val xDeskop = qi(XDesktop::class.java, desktop)
 val xComponentLoader = qi(XComponentLoader::class.java, desktop)
 val loadProps = arrayOf<PropertyValue>()
-val component: XComponent = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
+lateinit var component : XComponent
+try {
+    component = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
+} catch (e: Exception) {
+    println(e)
+    println("ERROR: Unable to open $inputDoc. If file exists and not corrupted try to delete LibreOffice lock files")
+    exitProcess(-1)
+}
 val xTextDocument = qi(XTextDocument::class.java, component)
 
 // Update indexes
@@ -78,8 +85,13 @@ saveProps[0].Value = true
 outputFormats.split(",").forEach {
     saveProps[1].Name = "FilterName"
     saveProps[1].Value = ext2format(it)
-    xStorable.storeToURL(fnmToURL("$outputDocBasePath.$it"), saveProps)
-    println("INFO: $outputDocBasePath.$it stored")
+    try {
+        xStorable.storeToURL(fnmToURL("$outputDocBasePath.$it"), saveProps)
+        println("INFO: $outputDocBasePath.$it stored")
+    } catch (e: Exception) {
+        println(e)
+        println("ERROR: Unable to save $outputDocBasePath.$it. Probably file is locked")
+    }
 }
 
 xDeskop.terminate()
