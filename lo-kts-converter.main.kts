@@ -16,6 +16,8 @@ import com.sun.star.connection.XConnection
 import com.sun.star.connection.XConnector
 import com.sun.star.frame.XComponentLoader
 import com.sun.star.frame.XDesktop
+import com.sun.star.frame.XDispatchHelper
+import com.sun.star.frame.XDispatchProvider
 import com.sun.star.frame.XStorable
 import com.sun.star.lang.XComponent
 import com.sun.star.lang.XMultiComponentFactory
@@ -33,42 +35,63 @@ import kotlin.system.exitProcess
 
 class MyArgs(parser: ArgParser) {
     val pInputDoc by parser.storing(
-            "-i", "--input-doc", help = "Input document")
+        "-i", "--input-doc", help = "Input document"
+    )
     val pOutputFormats by parser.storing(
-            "-f", "--output-formats", help = "Comma separated result format list like docx,pdf,odt. Default result format is PDF").default("pdf")
+        "-f",
+        "--output-formats",
+        help = "Comma separated result format list like docx,pdf,odt. Default result format is PDF"
+    ).default("pdf")
     val pLoCliCommand by parser.storing(
-            "-c", "--lo-cli-command", help = "CLI command to run Libre Office. Default command is 'soffice'.").default("soffice")
+        "-c", "--lo-cli-command", help = "CLI command to run Libre Office. Default command is 'soffice'."
+    ).default("soffice")
+    val pTrace by parser.flagging(
+        "-t", "--trace", help = ""
+    ).default(false)
 }
+
 lateinit var inputDoc: String
 lateinit var outputFormats: String
 lateinit var loCliCommand: String
+var trace: Boolean = false
 
 mainBody {
     ArgParser(args).parseInto(::MyArgs).run {
         inputDoc = pInputDoc
         outputFormats = pOutputFormats
         loCliCommand = pLoCliCommand
+        trace = pTrace
     }
 }
+
+println(trace)
 
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 val xContext = socketContext()
 val xMCF: XMultiComponentFactory? = xContext.serviceManager
-//val available = if (xMCF != null) "available" else "not available"
+
+val dispatcherHelper = xMCF!!.createInstanceWithContext("com.sun.star.frame.DispatchHelper", xContext)!!
+val xDispatcherHelper = qi(XDispatchHelper::class.java, dispatcherHelper)
 val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
 val xDeskop = qi(XDesktop::class.java, desktop)
 val xComponentLoader = qi(XComponentLoader::class.java, desktop)
 val loadProps = arrayOf<PropertyValue>()
-lateinit var component : XComponent
+var component: XComponent
 try {
     component = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
 } catch (e: Exception) {
     println(e)
+    if (trace) {
+        e.stackTrace.forEach {
+            println(it.toString())
+        }
+    }
     println("ERROR: Unable to open $inputDoc. If file exists and not corrupted try to delete LibreOffice lock files")
     exitProcess(-1)
 }
 val xTextDocument = qi(XTextDocument::class.java, component)
+val xDispatchProvider = qi(XDispatchProvider::class.java, xDeskop.currentFrame)
 
 // Update indexes
 val indexes = qi(XDocumentIndexesSupplier::class.java, xTextDocument)
@@ -77,6 +100,9 @@ for (i in 0..indexes.documentIndexes.count - 1) {
     index.update()
 }
 println("INFO: Indexes updated")
+
+xDispatcherHelper.executeDispatch(xDispatchProvider, ".uno:UpdateFields", "", 0, arrayOf<PropertyValue>())
+println("INFO: Fields updated")
 
 val xStorable = qi(XStorable::class.java, component)
 val saveProps = Array(2) { PropertyValue() }
@@ -90,6 +116,11 @@ outputFormats.split(",").forEach {
         println("INFO: $outputDocBasePath.$it stored")
     } catch (e: Exception) {
         println(e)
+        if (trace) {
+            e.stackTrace.forEach {
+                println(it.toString())
+            }
+        }
         println("ERROR: Unable to save $outputDocBasePath.$it. Probably file is locked")
     }
 }
@@ -113,16 +144,23 @@ fun socketContext(): XComponentContext // use socket connection to Office
         // Get the local service manager
         val localFactory = localContext.serviceManager
         // connect to Office via its socket
-        val connector: XConnector = qi(XConnector::class.java,
-                localFactory.createInstanceWithContext(
-                        "com.sun.star.connection.Connector", localContext))
+        val connector: XConnector = qi(
+            XConnector::class.java,
+            localFactory.createInstanceWithContext(
+                "com.sun.star.connection.Connector", localContext
+            )
+        )
         lateinit var connection: XConnection
         var connected = false
-        var attempts = 10
+        var attempts = 30
         while (attempts > 0 && !connected) {
+            if (trace) {
+                println("TRACE: $attempts attempts left")
+            }
             try {
                 connection = connector.connect(
-                        "socket,host=localhost,port=" + "8100")
+                    "socket,host=localhost,port=" + "8100"
+                )
                 connected = true
             } catch (_: Exception) {
             }
@@ -131,16 +169,21 @@ fun socketContext(): XComponentContext // use socket connection to Office
         }
 
         // create a bridge to Office via the socket
-        val bridgeFactory: XBridgeFactory = qi(XBridgeFactory::class.java,
-                localFactory.createInstanceWithContext(
-                        "com.sun.star.bridge.BridgeFactory", localContext))
+        val bridgeFactory: XBridgeFactory = qi(
+            XBridgeFactory::class.java,
+            localFactory.createInstanceWithContext(
+                "com.sun.star.bridge.BridgeFactory", localContext
+            )
+        )
 
         // create a nameless bridge with no instance provider
         val bridge = bridgeFactory.createBridge("socketBridgeAD", "urp", connection, null)
 
         // get the remote service manager
-        val serviceManager: XMultiComponentFactory = qi(XMultiComponentFactory::class.java,
-                bridge.getInstance("StarOffice.ServiceManager"))
+        val serviceManager: XMultiComponentFactory = qi(
+            XMultiComponentFactory::class.java,
+            bridge.getInstance("StarOffice.ServiceManager")
+        )
 
         // retrieve Office's remote component context as a property
         val props: XPropertySet = qi(XPropertySet::class.java, serviceManager)
@@ -149,6 +192,12 @@ fun socketContext(): XComponentContext // use socket connection to Office
         // get the remote interface XComponentContext
         xcc = qi(XComponentContext::class.java, defaultContext)
     } catch (e: Exception) {
+        println(e.message)
+        if (trace) {
+            e.stackTrace.forEach {
+                println(it.toString())
+            }
+        }
         println("ERROR: Unable to socket connect to Office")
         exitProcess(-1)
     }
@@ -188,6 +237,7 @@ fun ext2format(ext: String): String {
         "pdf" -> "writer_pdf_Export"
         "odt" -> "writer8"
         "fodt" -> "OpenDocument Text Flat XML"
+        "html" -> "HTML (StarWriter)"
         else -> null
     }
     if (format == null) {
