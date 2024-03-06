@@ -16,6 +16,8 @@ import com.sun.star.connection.XConnection
 import com.sun.star.connection.XConnector
 import com.sun.star.frame.XComponentLoader
 import com.sun.star.frame.XDesktop
+import com.sun.star.frame.XDispatchHelper
+import com.sun.star.frame.XDispatchProvider
 import com.sun.star.frame.XStorable
 import com.sun.star.lang.XComponent
 import com.sun.star.lang.XMultiComponentFactory
@@ -68,12 +70,16 @@ mainBody {
     }
 }
 
+println(trace)
+
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 val outputDocBaseFolder = Path(inputDoc).parent
 val xContext = socketContext()
 val xMCF: XMultiComponentFactory? = xContext.serviceManager
-//val available = if (xMCF != null) "available" else "not available"
+
+val dispatcherHelper = xMCF!!.createInstanceWithContext("com.sun.star.frame.DispatchHelper", xContext)!!
+val xDispatcherHelper = qi(XDispatchHelper::class.java, dispatcherHelper)
 val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
 val xDeskop = qi(XDesktop::class.java, desktop)
 val xComponentLoader = qi(XComponentLoader::class.java, desktop)
@@ -83,10 +89,16 @@ try {
     component = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
 } catch (e: Exception) {
     println(e)
+    if (trace) {
+        e.stackTrace.forEach {
+            println(it.toString())
+        }
+    }
     println("ERROR: Unable to open $inputDoc. If file exists and not corrupted try to delete LibreOffice lock files")
     exitProcess(-1)
 }
 val xTextDocument = qi(XTextDocument::class.java, component)
+val xDispatchProvider = qi(XDispatchProvider::class.java, xDeskop.currentFrame)
 
 // Update indexes
 val indexes = qi(XDocumentIndexesSupplier::class.java, xTextDocument)
@@ -95,6 +107,9 @@ for (i in 0..indexes.documentIndexes.count - 1) {
     index.update()
 }
 println("INFO: Indexes updated")
+
+xDispatcherHelper.executeDispatch(xDispatchProvider, ".uno:UpdateFields", "", 0, arrayOf<PropertyValue>())
+println("INFO: Fields updated")
 
 val xStorable = qi(XStorable::class.java, component)
 val saveProps = Array(2) { PropertyValue() }
@@ -146,8 +161,11 @@ fun socketContext(): XComponentContext // use socket connection to Office
         )
         lateinit var connection: XConnection
         var connected = false
-        var attempts = 10
+        var attempts = 30
         while (attempts > 0 && !connected) {
+            if (trace) {
+                println("TRACE: $attempts attempts left")
+            }
             try {
                 connection = connector.connect(
                     "socket,host=localhost,port=" + "8100"
@@ -183,6 +201,12 @@ fun socketContext(): XComponentContext // use socket connection to Office
         // get the remote interface XComponentContext
         xcc = qi(XComponentContext::class.java, defaultContext)
     } catch (e: Exception) {
+        println(e.message)
+        if (trace) {
+            e.stackTrace.forEach {
+                println(it.toString())
+            }
+        }
         println("ERROR: Unable to socket connect to Office")
         exitProcess(-1)
     }
@@ -222,6 +246,7 @@ fun ext2format(ext: String): String {
         "pdf" -> "writer_pdf_Export"
         "odt" -> "writer8"
         "fodt" -> "OpenDocument Text Flat XML"
+        "html" -> "HTML (StarWriter)"
         else -> null
     }
     if (format == null) {
