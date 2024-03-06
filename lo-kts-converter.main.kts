@@ -31,6 +31,7 @@ import com.xenomachina.argparser.default
 import com.xenomachina.argparser.mainBody
 import java.io.File
 import java.io.IOException
+import kotlin.io.path.Path
 import kotlin.system.exitProcess
 
 class MyArgs(parser: ArgParser) {
@@ -45,6 +46,9 @@ class MyArgs(parser: ArgParser) {
     val pLoCliCommand by parser.storing(
         "-c", "--lo-cli-command", help = "CLI command to run Libre Office. Default command is 'soffice'."
     ).default("soffice")
+    val pOutputFileName by parser.storing(
+        "-o", "--output-file-name", help = "File name without extension for output file"
+    ).default(null)
     val pTrace by parser.flagging(
         "-t", "--trace", help = ""
     ).default(false)
@@ -53,6 +57,7 @@ class MyArgs(parser: ArgParser) {
 lateinit var inputDoc: String
 lateinit var outputFormats: String
 lateinit var loCliCommand: String
+var outputFileName: String? = null
 var trace: Boolean = false
 
 mainBody {
@@ -60,6 +65,7 @@ mainBody {
         inputDoc = pInputDoc
         outputFormats = pOutputFormats
         loCliCommand = pLoCliCommand
+        outputFileName = pOutputFileName
         trace = pTrace
     }
 }
@@ -68,6 +74,7 @@ println(trace)
 
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
+val outputDocBaseFolder = Path(inputDoc).parent
 val xContext = socketContext()
 val xMCF: XMultiComponentFactory? = xContext.serviceManager
 
@@ -77,7 +84,7 @@ val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop"
 val xDeskop = qi(XDesktop::class.java, desktop)
 val xComponentLoader = qi(XComponentLoader::class.java, desktop)
 val loadProps = arrayOf<PropertyValue>()
-var component: XComponent
+lateinit var component: XComponent
 try {
     component = xComponentLoader.loadComponentFromURL(fnmToURL(inputDoc), "_blank", 0, loadProps)
 } catch (e: Exception) {
@@ -108,20 +115,22 @@ val xStorable = qi(XStorable::class.java, component)
 val saveProps = Array(2) { PropertyValue() }
 saveProps[0].Name = "Overwrite"
 saveProps[0].Value = true
-outputFormats.split(",").forEach {
+outputFormats.split(",").forEach { it ->
     saveProps[1].Name = "FilterName"
     saveProps[1].Value = ext2format(it)
+    val outputPath = if (outputFileName == null)
+        "$outputDocBasePath.$it" else "$outputDocBaseFolder/$outputFileName.$it"
     try {
-        xStorable.storeToURL(fnmToURL("$outputDocBasePath.$it"), saveProps)
-        println("INFO: $outputDocBasePath.$it stored")
+        xStorable.storeToURL(fnmToURL(outputPath), saveProps)
+        println("INFO: $outputPath stored")
     } catch (e: Exception) {
         println(e)
         if (trace) {
-            e.stackTrace.forEach {
-                println(it.toString())
+            e.stackTrace.forEach { stackTraceElement ->
+                println(stackTraceElement.toString())
             }
         }
-        println("ERROR: Unable to save $outputDocBasePath.$it. Probably file is locked")
+        println("ERROR: Unable to save $outputPath. Probably file is locked")
     }
 }
 
