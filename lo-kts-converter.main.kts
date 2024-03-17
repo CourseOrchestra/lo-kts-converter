@@ -6,8 +6,14 @@
 @file:DependsOn("org.libreoffice:libreoffice:7.4.7")
 @file:DependsOn("org.libreoffice:unoloader:7.4.7")
 @file:DependsOn("org.libreoffice:jurt:7.4.7")
-@file:DependsOn("com.xenomachina:kotlin-argparser:2.0.7")
+@file:DependsOn("com.github.ajalt.clikt:clikt-jvm:4.2.2")
 
+import com.github.ajalt.clikt.core.NoOpCliktCommand
+import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.flag
+import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.required
+import com.github.ajalt.clikt.parameters.types.boolean
 import com.sun.star.beans.PropertyValue
 import com.sun.star.beans.XPropertySet
 import com.sun.star.bridge.XBridgeFactory
@@ -26,58 +32,48 @@ import com.sun.star.text.XDocumentIndexesSupplier
 import com.sun.star.text.XTextDocument
 import com.sun.star.uno.UnoRuntime
 import com.sun.star.uno.XComponentContext
-import com.xenomachina.argparser.ArgParser
-import com.xenomachina.argparser.default
-import com.xenomachina.argparser.mainBody
 import java.io.File
 import java.io.IOException
 import kotlin.io.path.Path
 import kotlin.system.exitProcess
 
-class MyArgs(parser: ArgParser) {
-    val pInputDoc by parser.storing(
-        "-i", "--input-doc", help = "Input document"
-    )
-    val pOutputFormats by parser.storing(
+
+object Options : NoOpCliktCommand() {
+    val inputDoc by option("-i", "--input-doc", help = "Input document").required()
+    val outputFormats by option(
         "-f",
         "--output-formats",
         help = "Comma separated result format list like docx,pdf,odt. Default result format is PDF"
     ).default("pdf")
-    val pLoCliCommand by parser.storing(
-        "-c", "--lo-cli-command", help = "CLI command to run Libre Office. Default command is 'soffice'."
+    val loCliCommand by option(
+        "-c",
+        "--lo-cli-command",
+        help = "CLI command to run Libre Office. Default command is \"soffice\"."
     ).default("soffice")
-    val pOutputFileName by parser.storing(
-        "-o", "--output-file-name", help = "File name without extension for output file"
-    ).default(null)
-    val pTrace by parser.flagging(
-        "-t", "--trace", help = ""
-    ).default(false)
+    val outputFileName by option("-o", "--output-file-name", help = "File name without extension for output file")
+    val trace by option("-t", "--trace", help = "Output trace info").flag()
 }
+Options.main(args)
 
-lateinit var inputDoc: String
-lateinit var outputFormats: String
-lateinit var loCliCommand: String
-var outputFileName: String? = null
-var trace: Boolean = false
+var inputDoc = Options.inputDoc
+var outputFormats = Options.outputFormats
+var loCliCommand = Options.loCliCommand
+var outputFileName = Options.outputFileName
+var trace = Options.trace
 
-mainBody {
-    ArgParser(args).parseInto(::MyArgs).run {
-        inputDoc = pInputDoc
-        outputFormats = pOutputFormats
-        loCliCommand = pLoCliCommand
-        outputFileName = pOutputFileName
-        trace = pTrace
-    }
-}
-
-println(trace)
+inputDoc = "target/test.fodt_"
+outputFormats = "pdf"
+loCliCommand = "soffice"
+outputFileName = null
+trace = false
 
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 val outputDocBaseFolder = Path(inputDoc).parent
+    ?: throw Exception("Can't extract folder from \"${outputDocBasePath}\"")
+
 val xContext = socketContext()
 val xMCF: XMultiComponentFactory? = xContext.serviceManager
-
 val dispatcherHelper = xMCF!!.createInstanceWithContext("com.sun.star.frame.DispatchHelper", xContext)!!
 val xDispatcherHelper = qi(XDispatchHelper::class.java, dispatcherHelper)
 val desktop: Any = xMCF!!.createInstanceWithContext("com.sun.star.frame.Desktop", xContext)
