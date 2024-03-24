@@ -7,6 +7,7 @@
 @file:DependsOn("org.libreoffice:unoloader:7.4.7")
 @file:DependsOn("org.libreoffice:jurt:7.4.7")
 @file:DependsOn("com.github.ajalt.clikt:clikt-jvm:4.2.2")
+@file:DependsOn("net.java.dev.jna:jna-platform:5.13.0")
 
 import com.github.ajalt.clikt.core.NoOpCliktCommand
 import com.github.ajalt.clikt.parameters.options.default
