@@ -62,12 +62,6 @@ var loCliCommand = Options.loCliCommand
 var outputFileName = Options.outputFileName
 var trace = Options.trace
 
-inputDoc = "target/test.fodt_"
-outputFormats = "pdf"
-loCliCommand = "soffice"
-outputFileName = null
-trace = false
-
 val matchedDocBasePath = """.*(?=[\.][a-zA-Z_]+$)""".toRegex().find(inputDoc)
 val outputDocBasePath = matchedDocBasePath?.value ?: inputDoc
 val outputDocBaseFolder = Path(inputDoc).parent
